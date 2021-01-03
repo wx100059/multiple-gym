@@ -7,6 +7,8 @@ Description: Implementing DDPG algorithm on the Multiple timescale problem.
 """
 
 import gym
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 # solve the multi registration bug
 env_dict = gym.envs.registration.registry.env_specs.copy()
 for env in env_dict:
@@ -22,7 +24,8 @@ import tensorflow as tf
 from tensorflow.keras import layers
 import numpy as np
 import matplotlib.pyplot as plt
-import replay_buffers
+from matplotlib.animation import FuncAnimation
+#import replay_buffers
 
 """
 To implement better exploration by the Actor network, we use noisy perturbations,
@@ -77,7 +80,7 @@ the maximum predicted value as seen by the Critic, for a given state.
 
 
 class Buffer:
-    def __init__(self, buffer_capacity=100000, batch_size=64, num_states = 3, num_actions = 1):
+    def __init__(self, buffer_capacity=100000, batch_size=64, num_states = 2, num_actions = 1):
         # Number of "experiences" to store at max
         self.buffer_capacity = buffer_capacity
         # Num of tuples to train on.
@@ -150,8 +153,8 @@ class DDPG_controller:
         self.critic_lr = critic_lr
         self.actor_lr = actor_lr
         
-        self.critic_optimizer = tf.keras.optimizers.Adam(critic_lr)
-        self.actor_optimizer = tf.keras.optimizers.Adam(actor_lr) 
+        self.critic_optimizer = tf.keras.optimizers.SGD(critic_lr)
+        self.actor_optimizer = tf.keras.optimizers.SGD(actor_lr) 
         
         """
     Here we define the Actor and Critic networks. These are basic Dense models
@@ -165,12 +168,12 @@ class DDPG_controller:
     def get_actor(self):
         # Initialize weights between -3e-3 and 3-e3
         # last_init = tf.random_uniform_initializer(minval=-0.003, maxval=0.003)
-        last_init = tf.random_uniform_initializer
+        #last_init = tf.random_uniform_initializer
     
         inputs = layers.Input(shape=(self.buffer.num_states,))
         # out = layers.Dense(256, activation="relu")(inputs)
         out = layers.Dense(self.buffer.num_states, activation= None)(inputs)
-        outputs = layers.Dense(self.buffer.num_actions, activation= None, kernel_initializer=last_init)(out)
+        outputs = layers.Dense(self.buffer.num_actions, activation= None)(out)
     
         # Our upper bound is 2.0 for Pendulum.
         #outputs = outputs * upper_bound
@@ -181,15 +184,17 @@ class DDPG_controller:
     def get_critic(self):
         # State as input
         state_input = layers.Input(shape=(self.buffer.num_states))
-        state_out = layers.Dense(50, activation="tanh")(state_input)
-        state_out = layers.Dense(25, activation="tanh")(state_out)
+        state_out = layers.Dense(50, activation="sigmoid")(state_input)
+        state_out = layers.Dense(25, activation= None)(state_out)
         # Action as input
         action_input = layers.Input(shape=(self.buffer.num_actions))
-        action_out = layers.Dense(25, activation="tanh")(action_input)
+        action_out = layers.Dense(50, activation="sigmoid")(action_input)
+        action_out = layers.Dense(25, activation= None)(action_input)
     
         # Both are passed through seperate layer before concatenating
-        concat = layers.Concatenate()([state_out, action_out])
-        outputs = layers.Dense(1)(concat)
+        add = layers.add([state_out,action_out])
+        out = tf.keras.activations.sigmoid(add)
+        outputs = layers.Dense(1)(out)
     
         # Outputs single value for give state-action
         model = tf.keras.Model([state_input, action_input], outputs)
@@ -243,10 +248,13 @@ class DDPG_controller:
             critic_loss = tf.math.reduce_mean(tf.math.square(y - critic_value))
 
         critic_grad = tape.gradient(critic_loss, self.critic_model.trainable_variables)
+        clipped_critic_grad = [tf.clip_by_value(g, -1., 1.) for g in critic_grad]
         self.critic_optimizer.apply_gradients(
-            zip(critic_grad, self.critic_model.trainable_variables)
+            zip(clipped_critic_grad, self.critic_model.trainable_variables)
         )
-
+        # self.critic_optimizer.apply_gradients(
+        #     zip(critic_grad, self.critic_model.trainable_variables)
+        # )
         with tf.GradientTape() as tape:
             actions = self.actor_model(state_batch, training=True)
             critic_value = self.critic_model([state_batch, actions], training=True)
@@ -255,10 +263,13 @@ class DDPG_controller:
             actor_loss = -tf.math.reduce_mean(critic_value)
 
         actor_grad = tape.gradient(actor_loss, self.actor_model.trainable_variables)
+        clipped_actor_grad = [tf.clip_by_value(g, -1., 1.) for g in actor_grad]
+        # self.actor_optimizer.apply_gradients(
+        #     zip(actor_grad, self.actor_model.trainable_variables)
+        # )
         self.actor_optimizer.apply_gradients(
-            zip(actor_grad, self.actor_model.trainable_variables)
+            zip(clipped_actor_grad, self.actor_model.trainable_variables)
         )
-        
     # We compute the loss and update parameters
     def learn(self):
         # Get sampling range
@@ -275,6 +286,10 @@ class DDPG_controller:
 
         self.update(state_batch, action_batch, reward_batch, next_state_batch)
 
+
+def animate():
+    pass
+    
 """
 We use [OpenAIGym](http://gym.openai.com/docs) to create the environment.
 We will use the `upper_bound` parameter to scale our actions later.
@@ -282,8 +297,19 @@ We will use the `upper_bound` parameter to scale our actions later.
 
 #problem = "Pendulum-v0"
 problem = "multiple_gym-v0"
+# state_num=2
+# condition_num=2
+# observation_num=2
+# control_num=1
+# FPS=50
+# Q=np.eye(state_num)
+# R=np.eye(control_num)
+# N=np.zeros((state_num,control_num))
+# Tf = 20/FPS
 env = gym.make(problem)
-
+# env.__init__(state_num=state_num, condition_num=condition_num,
+#              observation_num=observation_num, 
+#              control_num=control_num, FPS=FPS, Q=Q, R=R, N=N, Tf=Tf, X0=X0)
 num_states = env.observation_space.shape[0]
 print("Size of State Space ->  {}".format(num_states))
 num_actions = env.action_space.shape[0]
@@ -300,13 +326,13 @@ print("Min Value of Action ->  {}".format(lower_bound))
 tf.keras.backend.set_floatx('float64')
 
 # Takes about 4 min to train
-total_episodes = 300
+total_episodes = 100
 
 controller = DDPG_controller(total_episodes = total_episodes, buffer_size = 1000000,
                              batch_size = 64, num_states = num_states,
-                             critic_lr = 0.001, actor_lr = 0.0001, 
+                             critic_lr = 0.001, actor_lr = 0.001, 
                              num_actions = num_actions, upper_bound = upper_bound,
-                             lower_bound = lower_bound, gamma = 1, tau = 0.001)
+                             lower_bound = lower_bound, gamma = 0.9, tau = 0.0001)
 """
 Now we implement our main training loop, and iterate over episodes.
 We sample actions using `policy()` and train with `learn()` at each time step,
@@ -322,8 +348,6 @@ for ep in range(controller.total_episodes):
 
     prev_state = env.reset()
     episodic_reward = 0
-    max_state = np.zeros(controller.buffer.num_states)
-    max_action = np.zeros(controller.buffer.num_actions)
     while True:
         # Uncomment this to see the Actor in action
         # But not in a python notebook.
@@ -335,10 +359,6 @@ for ep in range(controller.total_episodes):
         action = controller.policy(tf_prev_state, noise_object = None)
         # Recieve state and reward from environment.
         state, reward, done, info = env.step(action)
-        if np.linalg.norm(state)>np.linalg.norm(max_state):
-            max_state = state
-        if np.linalg.norm(action) > np.linalg.norm(max_action):
-            max_action = action
         controller.buffer.record((prev_state, action, reward, state))
         episodic_reward += reward
 
@@ -357,10 +377,12 @@ for ep in range(controller.total_episodes):
     # Mean of last 20 episodes
     avg_reward = np.mean(ep_reward_list[-20:])
     print("Episode * {} * Avg Reward is ==> {}".format(ep, avg_reward))
+    # print("Episode * {} * Episdoe Reward is ==> {}".format(ep, episodic_reward))
     # print("Episode * {} * Max State is ==> {}".format(ep, max_action))
     # print("Episode * {} * Max State is ==> {}".format(ep, max_state))
     avg_reward_list.append(avg_reward)
 
+#ani = FuncAnimation(plt.gct(),)
 # Plotting graph
 # Episodes versus Avg. Rewards
 plt.plot(avg_reward_list)

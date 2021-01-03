@@ -58,13 +58,13 @@ class multipleEnv(gym.Env):
         self.X0 = x
         self.reward_history.append(reward)
         done = False
-        if(len(self.reward_history)>200):
+        if len(self.reward_history) >= 200:
             done = True
         return y,reward,done,{}
     
     def reset(self):
         self.X0 = np.random.randn(self.state_num,self.control_num)
-        # self.X0 = np.zeros((self.state_num,self.control_num))
+        #self.X0 = np.zeros((self.state_num,self.control_num))
         self.reward_history = []
         yout, T, xout =control.matlab.lsim(self.ss,U = np.array(0),T = [0,1/self.FPS],X0=self.X0)
         y = yout[0,:]
