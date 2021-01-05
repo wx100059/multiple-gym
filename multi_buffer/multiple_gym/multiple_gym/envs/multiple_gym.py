@@ -40,7 +40,7 @@ class multipleEnv(gym.Env):
         self.action_space = spaces.Box(np.array([-10000]), np.array([10000]))
         self.observation_space = spaces.Box(np.array([-10000,-10000]), np.array([10000,10000]))
         self.reward_history = []
-        self.seed()
+        self.seed(10)
         self.reset()
 
     def seed(self, seed=None):
@@ -62,9 +62,12 @@ class multipleEnv(gym.Env):
             done = True
         return y,reward,done,{}
     
-    def reset(self):
-        self.X0 = np.random.randn(self.state_num,self.control_num)
-        #self.X0 = np.zeros((self.state_num,self.control_num))
+    def reset(self,X0 = None):
+        if np.all(X0 == None):
+            self.X0 = np.random.randn(self.state_num,self.control_num)
+            #self.X0 = np.zeros((self.state_num,self.control_num))
+        else:
+            self.X0 = X0
         self.reward_history = []
         yout, T, xout =control.matlab.lsim(self.ss,U = np.array(0),T = [0,1/self.FPS],X0=self.X0)
         y = yout[0,:]

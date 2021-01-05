@@ -24,6 +24,7 @@ import tensorflow as tf
 from tensorflow.keras import layers
 import numpy as np
 import matplotlib.pyplot as plt
+import control
 from matplotlib.animation import FuncAnimation
 #import replay_buffers
 
@@ -114,6 +115,13 @@ class Buffer:
         self.next_state_buffer[index] = obs_tuple[3]
 
         self.buffer_counter += 1
+        
+    def clear(self):
+        self.state_buffer = np.zeros((self.buffer_capacity, self.num_states))
+        self.action_buffer = np.zeros((self.buffer_capacity, self.num_actions))
+        self.reward_buffer = np.zeros((self.buffer_capacity, 1))
+        self.next_state_buffer = np.zeros((self.buffer_capacity, self.num_states))
+        self.buffer_counter = 0
 
 """
 ## Training hyperparameters
@@ -156,6 +164,12 @@ class DDPG_controller:
         self.critic_optimizer = tf.keras.optimizers.SGD(critic_lr)
         self.actor_optimizer = tf.keras.optimizers.SGD(actor_lr) 
         
+        #Counter for restart
+        self.critic_counter = 0
+        self.restart_threshold = 3000
+        
+        print('initialization')
+        
         """
     Here we define the Actor and Critic networks. These are basic Dense models
     with `ReLU` activation.
@@ -184,16 +198,15 @@ class DDPG_controller:
     def get_critic(self):
         # State as input
         state_input = layers.Input(shape=(self.buffer.num_states))
-        state_out = layers.Dense(50, activation="sigmoid")(state_input)
-        state_out = layers.Dense(25, activation= None)(state_out)
+        state_out = layers.Dense(50, activation= 'sigmoid')(state_input)
+        state_out = layers.Dense(25, activation= 'sigmoid')(state_out)
         # Action as input
         action_input = layers.Input(shape=(self.buffer.num_actions))
-        action_out = layers.Dense(50, activation="sigmoid")(action_input)
-        action_out = layers.Dense(25, activation= None)(action_input)
+        action_out = layers.Dense(25, activation= 'sigmoid')(action_input)
     
         # Both are passed through seperate layer before concatenating
         add = layers.add([state_out,action_out])
-        out = tf.keras.activations.sigmoid(add)
+        out = tf.keras.activations.tanh(add)
         outputs = layers.Dense(1)(out)
     
         # Outputs single value for give state-action
@@ -326,13 +339,24 @@ print("Min Value of Action ->  {}".format(lower_bound))
 tf.keras.backend.set_floatx('float64')
 
 # Takes about 4 min to train
-total_episodes = 100
+total_episodes = 1000
 
 controller = DDPG_controller(total_episodes = total_episodes, buffer_size = 1000000,
-                             batch_size = 64, num_states = num_states,
-                             critic_lr = 0.001, actor_lr = 0.001, 
-                             num_actions = num_actions, upper_bound = upper_bound,
-                             lower_bound = lower_bound, gamma = 0.9, tau = 0.0001)
+                         batch_size = 64, num_states = num_states,
+                         critic_lr = 0.0001, actor_lr = 0.001, 
+                         num_actions = num_actions, upper_bound = upper_bound,
+                         lower_bound = lower_bound, gamma = 0.9, tau = 0.001)
+reference = DDPG_controller(total_episodes = total_episodes, buffer_size = 1000000,
+                         batch_size = 64, num_states = num_states,
+                         critic_lr = 0.001, actor_lr = 0.0001, 
+                         num_actions = num_actions, upper_bound = upper_bound,
+                         lower_bound = lower_bound, gamma = 1, tau = 0.001)
+reference.actor_model.set_weights(controller.actor_model.get_weights())
+reference.critic_model.set_weights(controller.critic_model.get_weights())
+reference.target_actor.set_weights(controller.actor_model.get_weights())
+reference.target_critic.set_weights(controller.critic_model.get_weights()) 
+
+K, S, E = control.matlab.lqr(env.A,env.B,env.Q,env.R,env.N)   
 """
 Now we implement our main training loop, and iterate over episodes.
 We sample actions using `policy()` and train with `learn()` at each time step,
@@ -341,22 +365,29 @@ along with updating the Target networks at a rate `tau`.
 
 # To store reward history of each episode
 ep_reward_list = []
+reference_ep_reward_list = []
+lqr_ep_reward_list = []
 # # To store average reward history of last few episodes
 avg_reward_list = []
+reference_avg_reward_list = []
+lqr_avg_reward_list = []
 
 for ep in range(controller.total_episodes):
 
+    
     prev_state = env.reset()
+    start_state = env.X0
     episodic_reward = 0
     while True:
         # Uncomment this to see the Actor in action
         # But not in a python notebook.
         # env.render()
-        
+    
         tf_prev_state = tf.expand_dims(tf.convert_to_tensor(prev_state), 0)
 
-        # action = controller.policy(tf_prev_state, controller.ou_noise) 
+        #action = controller.policy(tf_prev_state, controller.ou_noise) 
         action = controller.policy(tf_prev_state, noise_object = None)
+        
         # Recieve state and reward from environment.
         state, reward, done, info = env.step(action)
         controller.buffer.record((prev_state, action, reward, state))
@@ -365,31 +396,88 @@ for ep in range(controller.total_episodes):
         controller.learn()
         controller.update_target(controller.target_actor.variables, controller.actor_model.variables, controller.tau)
         controller.update_target(controller.target_critic.variables, controller.critic_model.variables, controller.tau)
-
+        controller.critic_counter +=1
         # End this episode when `done` is True
         if done:
             break
-
         prev_state = state
-
+        
+    # reset the critic network and target critic network every certain steps
+    if controller.critic_counter > controller.restart_threshold:
+            controller.critic_model = controller.get_critic()
+            controller.target_critic.set_weights(controller.critic_model.get_weights())
+            controller.critic_counter = 0
+            controller.buffer.clear()
+            print('restart critic')
     ep_reward_list.append(episodic_reward)
+    
+    # the refernce controller
+    prev_state = env.reset(start_state)
+    reference_episodic_reward = 0
+    while True:
+        # Uncomment this to see the Actor in action
+        # But not in a python notebook.
+        # env.render()
+    
+        tf_prev_state = tf.expand_dims(tf.convert_to_tensor(prev_state), 0)
 
+        #action = controller.policy(tf_prev_state, controller.ou_noise) 
+        action = reference.policy(tf_prev_state, noise_object = None)
+        # Recieve state and reward from environment.
+        state, reward, done, info = env.step(action)
+        reference.buffer.record((prev_state, action, reward, state))
+        reference_episodic_reward += reward
+
+        reference.learn()
+        reference.update_target(reference.target_actor.variables, reference.actor_model.variables, reference.tau)
+        reference.update_target(reference.target_critic.variables, reference.critic_model.variables, reference.tau)
+        # End this episode when `done` is True
+        if done:
+            break
+        prev_state = state
+    reference_ep_reward_list.append(reference_episodic_reward)
+    
+    # the lqr controller
+    prev_state = env.reset(start_state)
+    lqr_episodic_reward = 0    
+    while True:
+        # Uncomment this to see the Actor in action
+        # But not in a python notebook.
+        # env.render()
+        prev_state = np.matrix(prev_state)
+        prev_state = np.matrix.transpose(prev_state)
+        action = -np.matmul(K, prev_state)
+        # Recieve state and reward from environment.
+        state, reward, done, info = env.step(action)
+        lqr_episodic_reward += reward
+        # End this episode when `done` is True
+        if done:
+            break     
+        prev_state = state
+    
+    lqr_ep_reward_list.append(lqr_episodic_reward)
     # Mean of last 20 episodes
     avg_reward = np.mean(ep_reward_list[-20:])
+    reference_avg_reward = np.mean(reference_ep_reward_list[-20:])
+    lqr_avg_reward = np.mean(lqr_ep_reward_list[-20:])
     print("Episode * {} * Avg Reward is ==> {}".format(ep, avg_reward))
-    # print("Episode * {} * Episdoe Reward is ==> {}".format(ep, episodic_reward))
-    # print("Episode * {} * Max State is ==> {}".format(ep, max_action))
-    # print("Episode * {} * Max State is ==> {}".format(ep, max_state))
+    print("Episode * {} * Reference Avg Reward is ==> {}".format(ep, reference_avg_reward))     
+    print("Episode * {} * LQR Avg Reward is ==> {}".format(ep, lqr_avg_reward))  
     avg_reward_list.append(avg_reward)
-
+    reference_avg_reward_list.append(reference_avg_reward)
+    lqr_avg_reward_list.append(lqr_avg_reward)
 #ani = FuncAnimation(plt.gct(),)
+
 # Plotting graph
 # Episodes versus Avg. Rewards
 plt.plot(avg_reward_list)
+plt.plot(reference_avg_reward_list)
+plt.plot(lqr_avg_reward_list)
 plt.xlabel("Episode")
 plt.ylabel("Avg. Epsiodic Reward")
 plt.show()
 
+env.close()
 
 # # Save the weights
 # controller.actor_model.save_weights("pendulum_actor.h5")
