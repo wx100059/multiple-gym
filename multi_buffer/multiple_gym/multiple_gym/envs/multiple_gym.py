@@ -8,7 +8,7 @@ import math
 
 
 class multipleEnv(gym.Env):
-    def __init__(self,state_num=2,condition_num=2,observation_num=2,
+    def __init__(self,state_num=2,condition_num=2, observation_num=2,
                  control_num=1,FPS=50, Q=None,R=None,N=None,Tf=None,X0=None):
         self.state_num = state_num
         self.condition_num = condition_num
@@ -41,6 +41,7 @@ class multipleEnv(gym.Env):
         self.observation_space = spaces.Box(np.array([-10000,-10000]), np.array([10000,10000]))
         self.reward_history = []
         self.seed(10)
+        np.random.seed(10)
         self.reset()
 
     def seed(self, seed=None):

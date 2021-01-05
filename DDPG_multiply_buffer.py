@@ -122,6 +122,23 @@ class Buffer:
         self.reward_buffer = np.zeros((self.buffer_capacity, 1))
         self.next_state_buffer = np.zeros((self.buffer_capacity, self.num_states))
         self.buffer_counter = 0
+        
+    def save(self, filepath):
+        f = open("demofile3.txt", "w")
+        f.write(self.buffer_capacity)
+        f.wirte(self.batch_size)
+        f.write(self.buffer_counter)
+        f.write(self.num_states)
+        f.wirte(self.num_actions)
+        f.write(self.state_buffer)
+        f.write(self.action_buffer)
+        f.write(self.reward_buffer)
+        f.write(self.next_state_buffer)
+        f.close()
+    
+    def read(self, filepath):
+        f = open(filepath, "r")
+        
 
 """
 ## Training hyperparameters
@@ -166,8 +183,10 @@ class DDPG_controller:
         
         #Counter for restart
         self.critic_counter = 0
-        self.restart_threshold = 3000
+        self.restart_threshold = 20000
         
+        # set random seed for controller
+        np.random.seed(10)
         print('initialization')
         
         """
@@ -181,29 +200,43 @@ class DDPG_controller:
     
     def get_actor(self):
         # Initialize weights between -3e-3 and 3-e3
-        # last_init = tf.random_uniform_initializer(minval=-0.003, maxval=0.003)
-        #last_init = tf.random_uniform_initializer
-    
+        kernel_init = tf.keras.initializers.RandomUniform(minval=-0.003, maxval=0.003, seed=0)
+        bias_init = tf.keras.initializers.Zeros()
         inputs = layers.Input(shape=(self.buffer.num_states,))
-        out = layers.Dense(self.buffer.num_states, activation= None)(inputs)
-        outputs = layers.Dense(self.buffer.num_actions, activation= None)(out)
+        out = layers.Dense(self.buffer.num_states, activation= None,
+                           kernel_initializer=kernel_init,
+                           bias_initializer=bias_init)(inputs)
+        outputs = layers.Dense(self.buffer.num_actions, activation= None,
+                           kernel_initializer=kernel_init,
+                           bias_initializer=bias_init)(out)
         model = tf.keras.Model(inputs, outputs)
         return model
 
 
     def get_critic(self):
+        # Initialize weights between -3e-3 and 3-e3
+        kernel_init = tf.keras.initializers.RandomUniform(minval=-0.003, maxval=0.003, seed=0)
+        bias_init = tf.keras.initializers.Zeros()
+        
         # State as input
         state_input = layers.Input(shape=(self.buffer.num_states))
-        state_out = layers.Dense(50, activation= 'tanh')(state_input)
-        state_out = layers.Dense(25, activation= None)(state_out)
+        state_out = layers.Dense(50, activation= 'tanh',
+                           kernel_initializer=kernel_init,
+                           bias_initializer=bias_init)(state_input)
+        state_out = layers.Dense(25, activation= None,
+                           kernel_initializer=kernel_init,
+                           bias_initializer=bias_init)(state_out)
         # Action as input
-        action_input = layers.Input(shape=(self.buffer.num_actions))
-        action_out = layers.Dense(25, activation= None)(action_input)
+        action_input = layers.Input(shape=(self.buffer.num_actions,))
+        action_out = layers.Dense(25, activation= None,
+                           kernel_initializer=kernel_init,
+                           bias_initializer=bias_init)(action_input)
     
         # Both are passed through seperate layer before concatenating
         add = layers.add([state_out,action_out])
         out = tf.keras.activations.tanh(add)
-        outputs = layers.Dense(1)(out)
+        outputs = layers.Dense(1, kernel_initializer=kernel_init,
+                           bias_initializer=bias_init)(out)
     
         # Outputs single value for give state-action
         model = tf.keras.Model([state_input, action_input], outputs)
@@ -335,7 +368,7 @@ print("Min Value of Action ->  {}".format(lower_bound))
 tf.keras.backend.set_floatx('float64')
 
 # Takes about 4 min to train
-total_episodes = 1000
+total_episodes = 200
 
 controller = DDPG_controller(total_episodes = total_episodes, buffer_size = 1000000,
                          batch_size = 64, num_states = num_states,
@@ -347,10 +380,15 @@ reference = DDPG_controller(total_episodes = total_episodes, buffer_size = 10000
                          critic_lr = 0.001, actor_lr = 0.0001, 
                          num_actions = num_actions, upper_bound = upper_bound,
                          lower_bound = lower_bound, gamma = 1, tau = 0.001)
+# controller.actor_model.load_weights("multi_actor.h5")
+# controller.critic_model.load_weights("multi_critic.h5")
+
+# controller.target_actor.load_weights("multi_target_actor.h5")
+# controller.target_critic.load_weights("multi_target_critic.h5")
 reference.actor_model.set_weights(controller.actor_model.get_weights())
 reference.critic_model.set_weights(controller.critic_model.get_weights())
-reference.target_actor.set_weights(controller.actor_model.get_weights())
-reference.target_critic.set_weights(controller.critic_model.get_weights()) 
+reference.target_actor.set_weights(controller.target_actor.get_weights())
+reference.target_critic.set_weights(controller.target_critic.get_weights()) 
 
 K, S, E = control.matlab.lqr(env.A,env.B,env.Q,env.R,env.N)   
 """
@@ -466,18 +504,21 @@ for ep in range(controller.total_episodes):
 
 # Plotting graph
 # Episodes versus Avg. Rewards
-plt.plot(avg_reward_list)
-plt.plot(reference_avg_reward_list)
-plt.plot(lqr_avg_reward_list)
+
+plt.plot(avg_reward_list, label='reinitialize')
+plt.plot(reference_avg_reward_list, label='non-reinitialize')
+plt.plot(lqr_avg_reward_list, label='lqr')
 plt.xlabel("Episode")
-plt.ylabel("Avg. Epsiodic Reward")
+plt.ylabel("Average Reward per Epsiodic")
+plt.legend()
 plt.show()
 
 env.close()
 
-# # Save the weights
-# controller.actor_model.save_weights("pendulum_actor.h5")
-# controller.critic_model.save_weights("pendulum_critic.h5")
+# Save the weights
+reference.actor_model.save_weights("multi_actor.h5")
+reference.critic_model.save_weights("multi_critic.h5")
 
-# controller.target_actor.save_weights("pendulum_target_actor.h5")
-# controller.target_critic.save_weights("pendulum_target_critic.h5")
+reference.target_actor.save_weights("multi_target_actor.h5")
+reference.target_critic.save_weights("multi_target_critic.h5")
+reference.buffer
