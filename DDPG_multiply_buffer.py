@@ -185,12 +185,8 @@ class DDPG_controller:
         #last_init = tf.random_uniform_initializer
     
         inputs = layers.Input(shape=(self.buffer.num_states,))
-        # out = layers.Dense(256, activation="relu")(inputs)
         out = layers.Dense(self.buffer.num_states, activation= None)(inputs)
         outputs = layers.Dense(self.buffer.num_actions, activation= None)(out)
-    
-        # Our upper bound is 2.0 for Pendulum.
-        #outputs = outputs * upper_bound
         model = tf.keras.Model(inputs, outputs)
         return model
 
@@ -198,11 +194,11 @@ class DDPG_controller:
     def get_critic(self):
         # State as input
         state_input = layers.Input(shape=(self.buffer.num_states))
-        state_out = layers.Dense(50, activation= 'sigmoid')(state_input)
-        state_out = layers.Dense(25, activation= 'sigmoid')(state_out)
+        state_out = layers.Dense(50, activation= 'tanh')(state_input)
+        state_out = layers.Dense(25, activation= None)(state_out)
         # Action as input
         action_input = layers.Input(shape=(self.buffer.num_actions))
-        action_out = layers.Dense(25, activation= 'sigmoid')(action_input)
+        action_out = layers.Dense(25, activation= None)(action_input)
     
         # Both are passed through seperate layer before concatenating
         add = layers.add([state_out,action_out])
@@ -343,9 +339,9 @@ total_episodes = 1000
 
 controller = DDPG_controller(total_episodes = total_episodes, buffer_size = 1000000,
                          batch_size = 64, num_states = num_states,
-                         critic_lr = 0.0001, actor_lr = 0.001, 
+                         critic_lr = 0.001, actor_lr = 0.0001, 
                          num_actions = num_actions, upper_bound = upper_bound,
-                         lower_bound = lower_bound, gamma = 0.9, tau = 0.001)
+                         lower_bound = lower_bound, gamma = 1, tau = 0.001)
 reference = DDPG_controller(total_episodes = total_episodes, buffer_size = 1000000,
                          batch_size = 64, num_states = num_states,
                          critic_lr = 0.001, actor_lr = 0.0001, 
