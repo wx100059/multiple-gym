@@ -27,7 +27,7 @@ import matplotlib.pyplot as plt
 import control
 from matplotlib.animation import FuncAnimation
 #import replay_buffers
-
+tf.random.set_seed(1234)
 """
 To implement better exploration by the Actor network, we use noisy perturbations,
 specifically
