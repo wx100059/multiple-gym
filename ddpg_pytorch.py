@@ -14,8 +14,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import multiple_gym   
-
-
+import os
+        
 class Actor(nn.Module):
     '''
     3 layers full connected network. Remove bias
@@ -23,16 +23,15 @@ class Actor(nn.Module):
     def __init__(self, input_size, hidden_size, output_size):
         super(Actor, self).__init__()
         self.linear1 = nn.Linear(input_size, hidden_size,bias=False)
-        self.linear2 = nn.Linear(hidden_size, hidden_size,bias=False)
-        self.linear3 = nn.Linear(hidden_size, output_size,bias=False)
+        self.linear2 = nn.Linear(hidden_size, output_size,bias=False)
+        
         # Initialize weights between -3e-3 and 3e-3
         self.linear1.weight.data.normal_(-3e-3,3e-3)
         self.linear2.weight.data.normal_(-3e-3,3e-3)
-        self.linear3.weight.data.normal_(-3e-3,3e-3)
+        
     def forward(self, s):
-        x = F.relu(self.linear1(s))
-        x = F.relu(self.linear2(x))
-        x = torch.tanh(self.linear3(x))
+        x = self.linear1(s)
+        x = self.linear2(x)
 
         return x
 
@@ -41,21 +40,24 @@ class Critic(nn.Module):
     '''
     3 layers full connected network. Remove bias
     '''
-    def __init__(self, input_size, hidden_size, output_size):
+    def __init__(self, state_size, action_size, hidden_size, output_size):
         super().__init__()
-        self.linear1 = nn.Linear(input_size, hidden_size,bias=False)
-        self.linear2 = nn.Linear(hidden_size, hidden_size,bias=False)
-        self.linear3 = nn.Linear(hidden_size, output_size,bias=False)
+        self.state_path1 = nn.Linear(state_size, 50)
+        self.state_path2 = nn.Linear(50, 25)
+        self.action_path1 = nn.Linear(action_size, 25)
+        self.common_path1 = nn.Linear(25,1)
         # Initialize weights between -3e-3 and 3e-3
-        self.linear1.weight.data.normal_(-3e-3,3e-3)
-        self.linear2.weight.data.normal_(-3e-3,3e-3)
-        self.linear3.weight.data.normal_(-3e-3,3e-3)
-
+        self.state_path1.weight.data.normal_(-3e-3,3e-3)
+        self.state_path2.weight.data.normal_(-3e-3,3e-3)
+        self.action_path1.weight.data.normal_(-3e-3,3e-3)
+        self.common_path1.weight.data.normal_(-3e-3,3e-3)
     def forward(self, s, a):
-        x = torch.cat([s, a], 1) #Concatenates the state and action in the column
-        x = F.relu(self.linear1(x))
-        x = F.relu(self.linear2(x))
-        x = self.linear3(x)
+        s = torch.tanh(self.state_path1(s))
+        s = self.state_path2(s)
+        a = self.action_path1(a)
+        x = s + a
+        x = torch.tanh(x)
+        x = self.common_path1(x)
         return x
 
 
@@ -69,8 +71,8 @@ class Agent(object):
 
         self.actor = Actor(s_dim, 256, a_dim)
         self.actor_target = Actor(s_dim, 256, a_dim)
-        self.critic = Critic(s_dim+a_dim, 256, a_dim)
-        self.critic_target = Critic(s_dim+a_dim, 256, a_dim)
+        self.critic = Critic(s_dim, a_dim, 256, a_dim)
+        self.critic_target = Critic(s_dim, a_dim, 256, a_dim)
         self.actor_optim = optim.Adam(self.actor.parameters(), lr = self.actor_lr)
         self.critic_optim = optim.Adam(self.critic.parameters(), lr = self.critic_lr)
         self.buffer = []
@@ -129,19 +131,18 @@ class Agent(object):
         soft_update(self.critic_target, self.critic, self.tau)
         soft_update(self.actor_target, self.actor, self.tau)
                                            
-if __name__ == '__main__':                                           
-  
+if __name__ == '__main__':          
     env = gym.make('multiple_gym-v0')
     env.reset()
 
     params = {
     'env': env,
     'gamma': 0.99, 
-    'actor_lr': 0.001, 
+    'actor_lr': 0.0001, 
     'critic_lr': 0.001,
-    'tau': 0.02,
-    'capacity': 10000, 
-    'batch_size': 32,
+    'tau': 0.001,
+    'capacity': 1000000, 
+    'batch_size': 64,
     }
 
     agent = Agent(**params)
@@ -161,3 +162,14 @@ if __name__ == '__main__':
             agent.learn()
 
         print(episode, ': ', episode_reward)
+    
+    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+    # solve the multi registration bug
+    env_dict = gym.envs.registration.registry.env_specs.copy()
+    for env in env_dict:
+        if 'multiple_gym-v0' in env:
+            print("Remove {} from registry".format(env))
+            del gym.envs.registration.registry.env_specs[env]
+        if 'multiple_gym_extend-v0' in env:
+            print("Remove {} from registry".format(env))
+            del gym.envs.registration.registry.env_specs[env]
